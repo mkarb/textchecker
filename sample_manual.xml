@@ -1,0 +1,23 @@
+<manual>
+  <title>Field Maintenance Manual</title>
+  <customer>Prepared for Acme Defense Systems, Inc. under contract.</customer>
+  <chapter>
+    <title>Introduction</title>
+    <para>The Line Replaceable Unit (LRU) is the core component. Each Line Replaceable Unit
+      is tested with Built-In Test Equipment. The Line Replaceable Unit must be inspected
+      before flight.</para>
+    <para>Built-In Test Equipment verifies the Line Replaceable Unit. Built-In Test Equipment
+      reports faults to the operator.</para>
+    <para>The Auxiliary Power Unit (APU) supplies power. The Reliability Centered Maintenance
+      (RCM) program applies. Later the RCM (Root Cause Methodology) is referenced, which is a
+      conflict in this manual.</para>
+    <para>See page 42 for the maintenence schedule. Refer to page 7 for the wiring diagram.</para>
+    <para>This manual was also issued to Globex Corporation under a prior contract revision.</para>
+    <para>Support is provided by Acme Defense Systems Inc during the warranty period.</para>
+    <pagenum>1</pagenum>
+    <pagenum>2</pagenum>
+    <pagenum>2</pagenum>
+    <pagenum>5</pagenum>
+    <para>Page 3 of 12 appears in the footer. Page 4 of 12 follows on the next sheet.</para>
+  </chapter>
+</manual>

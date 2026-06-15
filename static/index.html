@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manual Proofreader — local</title>
+<style>
+  :root{
+    --bg:#0d1014; --panel:#141a21; --panel-2:#0f151b; --line:#243039;
+    --ink:#d7dee6; --ink-dim:#8a97a4; --ink-faint:#5d6b78;
+    --accent:#f0b429; --accent-dim:#7a5e1c; --bad:#e5534b; --ok:#3fb950;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  header{border-bottom:1px solid var(--line);background:
+    linear-gradient(180deg,#10161d,#0d1014);position:sticky;top:0;z-index:5}
+  .bar{max-width:880px;margin:0 auto;padding:14px 22px;display:flex;align-items:center;gap:14px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);
+    box-shadow:0 0 0 3px rgba(63,185,80,.15)}
+  .brand{font-family:var(--mono);font-size:13px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--ink)}
+  .brand b{color:var(--accent);font-weight:600}
+  .host{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-faint);
+    letter-spacing:.08em}
+
+  nav{max-width:880px;margin:0 auto;padding:0 22px;display:flex;gap:0;border-bottom:1px solid var(--line)}
+  .tab{appearance:none;background:none;border:0;border-bottom:2px solid transparent;
+    color:var(--ink-dim);font-family:var(--mono);font-size:12px;letter-spacing:.12em;
+    text-transform:uppercase;padding:13px 16px;cursor:pointer}
+  .tab:hover{color:var(--ink)}
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+  main{max-width:880px;margin:0 auto;padding:30px 22px 80px}
+  .view{display:none}
+  .view.active{display:block;animation:fade .25s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .lead{color:var(--ink-dim);margin:0 0 26px;max-width:62ch}
+
+  label{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--ink-faint);margin:0 0 7px}
+  .field{margin-bottom:20px}
+  input[type=text],input[type=number],textarea{width:100%;background:var(--panel-2);
+    border:1px solid var(--line);border-radius:6px;color:var(--ink);font:inherit;
+    padding:10px 12px;outline:none}
+  input:focus,textarea:focus{border-color:var(--accent-dim);box-shadow:0 0 0 2px rgba(240,180,41,.12)}
+  textarea{min-height:120px;resize:vertical;line-height:1.55}
+  .hint{font-size:12.5px;color:var(--ink-faint);margin-top:6px}
+
+  .drop{border:1px dashed var(--line);border-radius:8px;background:var(--panel-2);
+    padding:26px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s}
+  .drop:hover,.drop.drag{border-color:var(--accent);background:#10161d}
+  .drop .big{font-family:var(--mono);font-size:13px;letter-spacing:.06em;color:var(--ink)}
+  .drop .sub{font-size:12.5px;color:var(--ink-faint);margin-top:5px}
+  .drop.has{border-style:solid;border-color:var(--accent-dim)}
+  .drop.has .big{color:var(--accent)}
+
+  .row{display:flex;gap:16px;flex-wrap:wrap}
+  .row .field{flex:1;min-width:200px}
+  .check{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12px;
+    letter-spacing:.06em;color:var(--ink-dim);text-transform:none}
+  .check input{width:16px;height:16px;accent-color:var(--accent)}
+
+  button.go{appearance:none;background:var(--accent);color:#1a1205;border:0;border-radius:6px;
+    font-family:var(--mono);font-size:13px;letter-spacing:.08em;text-transform:uppercase;
+    font-weight:600;padding:12px 22px;cursor:pointer}
+  button.go:hover{filter:brightness(1.07)}
+  button.go:disabled{opacity:.5;cursor:not-allowed}
+
+  .status{margin-top:26px;border:1px solid var(--line);border-radius:8px;background:var(--panel);
+    padding:16px 18px;display:none;align-items:center;gap:13px}
+  .status.show{display:flex}
+  .spin{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--accent);
+    border-radius:50%;animation:spin .8s linear infinite;flex:none}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .status .msg{font-family:var(--mono);font-size:12.5px;letter-spacing:.04em;color:var(--ink-dim)}
+  .status.err{border-color:var(--bad)} .status.err .msg{color:var(--bad)}
+
+  .result{margin-top:26px;display:none}
+  .result.show{display:block}
+  .resbar{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  .resbar .name{font-family:var(--mono);font-size:12px;color:var(--ink-faint);
+    letter-spacing:.04em;margin-right:auto;word-break:break-all}
+  .btn{appearance:none;background:var(--panel);border:1px solid var(--line);border-radius:6px;
+    color:var(--ink);font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+    text-transform:uppercase;padding:8px 13px;cursor:pointer}
+  .btn:hover{border-color:var(--accent-dim);color:var(--accent)}
+  .warn{font-family:var(--mono);font-size:11.5px;color:var(--accent);margin-bottom:14px;
+    border-left:2px solid var(--accent-dim);padding-left:10px}
+
+  /* rendered markdown */
+  .md{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:8px 26px 24px}
+  .md h1{font-size:19px;letter-spacing:.02em;border-bottom:1px solid var(--line);
+    padding-bottom:12px;margin:22px 0 16px}
+  .md h2{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);margin:26px 0 12px}
+  .md h3{font-size:15px;margin:20px 0 8px}
+  .md p{margin:10px 0;color:var(--ink)}
+  .md ul{margin:10px 0;padding-left:20px}
+  .md li{margin:5px 0}
+  .md code{font-family:var(--mono);font-size:12.5px;background:var(--panel-2);
+    border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:var(--accent)}
+  .md strong{color:#fff;font-weight:600}
+  .md em{color:var(--ink-dim);font-style:normal;font-family:var(--mono);font-size:12.5px}
+  .md blockquote{margin:14px 0;padding:10px 14px;border-left:2px solid var(--accent-dim);
+    background:var(--panel-2);border-radius:0 6px 6px 0;color:var(--ink-dim);font-size:13.5px}
+  .md table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+  .md th,.md td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  .md th{background:var(--panel-2);font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--ink-dim)}
+  .md tr:nth-child(even) td{background:rgba(255,255,255,.012)}
+  .md hr{border:0;border-top:1px solid var(--line);margin:22px 0}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <span class="dot" id="dot"></span>
+    <span class="brand"><b>PROOFER</b> · local manual review</span>
+    <span class="host" id="modelStatus" title="Inference model status">checking model…</span>
+    <span class="host" id="host" style="margin-left:14px"></span>
+  </div>
+</header>
+
+<nav>
+  <button class="tab active" data-view="proofread">Proofread</button>
+  <button class="tab" data-view="references">References</button>
+</nav>
+
+<main>
+  <!-- PROOFREAD ----------------------------------------------------------- -->
+  <section class="view active" id="proofread">
+    <p class="lead">Upload a <code>.docx</code>, <code>.pdf</code>, or <code>.xml</code> technical manual. It is processed
+      on the local machine — nothing leaves the network — and a consistency report is returned here.</p>
+
+    <div class="field">
+      <label>Document</label>
+      <div class="drop" id="drop">
+        <div class="big" id="dropLabel">Click to choose a file, or drop one here</div>
+        <div class="sub">.docx, .pdf, or .xml · up to 25 MB</div>
+      </div>
+      <input type="file" id="file" accept=".docx,.pdf,.xml" hidden>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label>Expected customer <span style="text-transform:none;color:var(--ink-faint)">(optional)</span></label>
+        <input type="text" id="customer" placeholder="e.g. Acme Defense Systems, Inc.">
+        <div class="hint">Turns the leftover-customer check into a precise comparison.</div>
+      </div>
+      <div class="field" style="max-width:160px;flex:0 0 160px">
+        <label>Min repeats</label>
+        <input type="number" id="minc" value="3" min="2" max="20">
+        <div class="hint">Phrase frequency floor.</div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Document context <span style="text-transform:none;color:var(--ink-faint)">(optional — see References)</span></label>
+      <textarea id="context" placeholder="Tell the model about the document: what kind of manual it is, the customer, your acronym house style, the approved glossary, and any part numbers or codenames to ignore."></textarea>
+    </div>
+
+    <div class="field"><label class="check"><input type="checkbox" id="nollm"> Skip the model pass (faster, deterministic findings only)</label></div>
+
+    <button class="go" id="go">Run proofread</button>
+
+    <div class="status" id="status"><div class="spin" id="spin"></div><div class="msg" id="statusMsg"></div></div>
+
+    <div class="result" id="result">
+      <div class="resbar">
+        <span class="name" id="resName"></span>
+        <button class="btn" id="dlReport">Download .md</button>
+        <button class="btn" id="dlJson">Raw JSON</button>
+      </div>
+      <div class="warn" id="resWarn" style="display:none"></div>
+      <div class="md" id="md"></div>
+    </div>
+  </section>
+
+  <!-- REFERENCES ---------------------------------------------------------- -->
+  <section class="view" id="references">
+    <div class="md" id="refMd"><p style="color:var(--ink-faint);font-family:var(--mono);font-size:12px">Loading guide…</p></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+// ---- minimal, SAFE markdown -> HTML (escapes first, then limited transforms) ----
+function esc(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function inline(s){
+  return s
+    .replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+    .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,;:!?]|$)/g,'$1<em>$2</em>');
+}
+function isSep(cells){return cells.length && cells.every(c=>/^:?-{2,}:?$/.test(c.trim()));}
+function splitRow(line){
+  let t=line.trim().replace(/^\|/,'').replace(/\|$/,'');
+  return t.split('|').map(c=>c.trim());
+}
+function renderMd(src){
+  const lines = esc(src).replace(/\r/g,'').split('\n');
+  let html='', i=0;
+  while(i<lines.length){
+    let ln=lines[i];
+    if(/^\s*$/.test(ln)){i++;continue;}
+    // horizontal rule
+    if(/^---+\s*$/.test(ln)){html+='<hr>';i++;continue;}
+    // table
+    if(/^\s*\|/.test(ln)){
+      const block=[];
+      while(i<lines.length && /^\s*\|/.test(lines[i])){block.push(lines[i]);i++;}
+      let rows=block.map(splitRow), head=null, start=0;
+      if(rows.length>=2 && isSep(rows[1])){head=rows[0];start=2;}
+      html+='<table>';
+      if(head){html+='<thead><tr>'+head.map(c=>'<th>'+inline(c)+'</th>').join('')+'</tr></thead>';}
+      html+='<tbody>';
+      for(let r=start;r<rows.length;r++){
+        if(isSep(rows[r]))continue;
+        html+='<tr>'+rows[r].map(c=>'<td>'+inline(c)+'</td>').join('')+'</tr>';
+      }
+      html+='</tbody></table>';
+      continue;
+    }
+    // headings
+    let h=ln.match(/^(#{1,3})\s+(.*)$/);
+    if(h){const n=h[1].length;html+=`<h${n}>`+inline(h[2])+`</h${n}>`;i++;continue;}
+    // blockquote
+    if(/^>\s?/.test(ln)){
+      const buf=[];
+      while(i<lines.length && /^>\s?/.test(lines[i])){buf.push(lines[i].replace(/^>\s?/,''));i++;}
+      html+='<blockquote>'+inline(buf.join(' '))+'</blockquote>';
+      continue;
+    }
+    // list
+    if(/^[-*]\s+/.test(ln)){
+      const buf=[];
+      while(i<lines.length && /^[-*]\s+/.test(lines[i])){buf.push(lines[i].replace(/^[-*]\s+/,''));i++;}
+      html+='<ul>'+buf.map(x=>'<li>'+inline(x)+'</li>').join('')+'</ul>';
+      continue;
+    }
+    // paragraph
+    const buf=[];
+    while(i<lines.length && !/^\s*$/.test(lines[i]) && !/^(#{1,3}\s|>|[-*]\s|\s*\||---+\s*$)/.test(lines[i])){
+      buf.push(lines[i]);i++;
+    }
+    html+='<p>'+inline(buf.join(' '))+'</p>';
+  }
+  return html;
+}
+
+// ---- tabs ----
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  document.getElementById(t.dataset.view).classList.add('active');
+  if(t.dataset.view==='references') loadRefs();
+});
+
+let refsLoaded=false;
+async function loadRefs(){
+  if(refsLoaded)return; refsLoaded=true;
+  try{
+    const r=await fetch('/static/references.md');
+    document.getElementById('refMd').innerHTML=renderMd(await r.text());
+  }catch(e){
+    document.getElementById('refMd').innerHTML='<p>Could not load the guide.</p>';refsLoaded=false;
+  }
+}
+
+// ---- host label + health + model probe ----
+document.getElementById('host').textContent=location.host;
+fetch('/api/healthz').then(r=>r.json()).catch(()=>{
+  document.getElementById('dot').style.background='var(--bad)';
+});
+
+const ms=document.getElementById('modelStatus');
+fetch('/api/model').then(r=>r.json()).then(d=>{
+  if(d.chat_ok){
+    ms.textContent=`model: ${d.model_reported||d.model_configured} ✓ ${d.latency_ms}ms`;
+    ms.style.color='var(--ok)';
+  }else if(d.reachable){
+    ms.textContent=`model: ${d.model_configured} — server up, chat failed`;
+    ms.style.color='var(--accent)'; ms.title=d.chat_error||'';
+  }else{
+    ms.textContent='model: offline — deterministic only';
+    ms.style.color='var(--accent)'; ms.title=d.error||'';
+  }
+}).catch(()=>{ms.textContent='model: status unknown';ms.style.color='var(--ink-faint)';});
+
+// ---- file picker ----
+const drop=document.getElementById('drop'), fileInput=document.getElementById('file'),
+      dropLabel=document.getElementById('dropLabel');
+drop.onclick=()=>fileInput.click();
+['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('drag');}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('drag');}));
+drop.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length){fileInput.files=ev.dataTransfer.files;showFile();}});
+fileInput.onchange=showFile;
+function showFile(){
+  const f=fileInput.files[0];
+  if(f){drop.classList.add('has');dropLabel.textContent=f.name;}
+}
+
+// ---- submit + poll ----
+const go=document.getElementById('go'), statusEl=document.getElementById('status'),
+      statusMsg=document.getElementById('statusMsg'), spin=document.getElementById('spin'),
+      result=document.getElementById('result');
+let currentJob=null;
+
+function setStatus(msg,{err=false,spinning=true}={}){
+  statusEl.classList.add('show');
+  statusEl.classList.toggle('err',err);
+  spin.style.display=spinning?'block':'none';
+  statusMsg.textContent=msg;
+}
+
+go.onclick=async()=>{
+  if(!fileInput.files.length){setStatus('Choose a .docx, .pdf, or .xml file first.',{err:true,spinning:false});return;}
+  result.classList.remove('show');
+  go.disabled=true;
+  setStatus('Uploading…');
+  const fd=new FormData();
+  fd.append('file',fileInput.files[0]);
+  fd.append('expected_customer',document.getElementById('customer').value||'');
+  fd.append('context',document.getElementById('context').value||'');
+  fd.append('min_count',document.getElementById('minc').value||'3');
+  fd.append('no_llm',document.getElementById('nollm').checked?'true':'false');
+  try{
+    const r=await fetch('/api/jobs',{method:'POST',body:fd});
+    if(!r.ok){throw new Error((await r.json()).detail||('HTTP '+r.status));}
+    const j=await r.json();
+    currentJob=j.job_id;
+    setStatus(j.queue_depth>1?`Queued (position ${j.queue_depth})…`:'Processing on the local model…');
+    poll();
+  }catch(e){setStatus('Upload failed: '+e.message,{err:true,spinning:false});go.disabled=false;}
+};
+
+async function poll(){
+  if(!currentJob)return;
+  try{
+    const r=await fetch('/api/jobs/'+currentJob);
+    const j=await r.json();
+    if(j.status==='queued'){setStatus('Waiting in queue…');}
+    else if(j.status==='running'){setStatus('Processing on the local model…');}
+    else if(j.status==='done'){go.disabled=false;return showResult(j);}
+    else if(j.status==='error'){go.disabled=false;return setStatus('Processing failed: '+(j.error||'unknown'),{err:true,spinning:false});}
+  }catch(e){/* transient */}
+  setTimeout(poll,1500);
+}
+
+async function showResult(j){
+  statusEl.classList.remove('show');
+  const r=await fetch('/api/jobs/'+currentJob+'/report');
+  document.getElementById('md').innerHTML=renderMd(await r.text());
+  document.getElementById('resName').textContent=j.name||'';
+  const warn=document.getElementById('resWarn');
+  if(j.model_ok===false){
+    warn.style.display='block';warn.style.color='var(--accent)';
+    warn.style.borderLeftColor='var(--accent-dim)';
+    warn.textContent='Model pass unavailable — showing deterministic findings only'+(j.model_note?(' ('+j.model_note+')'):'.');
+  }else if(j.model_ok===true){
+    warn.style.display='block';warn.style.color='var(--ok)';
+    warn.style.borderLeftColor='var(--ok)';
+    warn.textContent=`✓ Model-generated · ${j.model_reported||'model'} · ${j.completion_tokens??'?'} completion tokens · ${j.latency_ms??'?'} ms`;
+  }else{warn.style.display='none';}
+  document.getElementById('dlReport').onclick=()=>location.href='/api/jobs/'+currentJob+'/download';
+  document.getElementById('dlJson').onclick=()=>window.open('/api/jobs/'+currentJob+'/findings','_blank');
+  result.classList.add('show');
+  result.scrollIntoView({behavior:'smooth',block:'start'});
+}
+</script>
+</body>
+</html>

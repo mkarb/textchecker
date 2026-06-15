@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Local Claude Code config (machine-specific; do not publish)
+.claude/
+
+# Runtime job store / uploads / generated reports
+data/
+*.findings.json
+*.report.md
+
+# Uploaded source documents (CUI risk — never commit real manuals)
+# Keep the invented sample_manual.xml; ignore everything else.
+*.docx
+*.pdf
+!sample_manual.xml
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

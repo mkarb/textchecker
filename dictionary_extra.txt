@@ -1,0 +1,46 @@
+# Words the proofreader's spell-checker should treat as correct (NOT misspellings).
+# One per line; case-insensitive; text after '#' is a comment.
+# Add to this whenever a valid term shows up as a false "misspelling".
+# (Words <= 3 letters and ALL-CAPS acronyms are already skipped automatically.)
+
+# --- common abbreviations (>= 4 letters) ---
+bldg
+misc
+corp
+dept
+assy
+approx
+sched
+config
+calc
+spec
+specs
+
+# --- domain / engineering terms ---
+onsite
+offsite
+derate
+derated
+derating
+disposition
+dispositioned
+lensed
+fishbone
+ishikawa
+via
+vias
+backplane
+backplanes
+passband
+bandpass
+waveform
+waveforms
+transceiver
+attenuator
+attenuators
+circulator
+circulators
+desensitization
+testability
+maintainability
+solderability
