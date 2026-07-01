@@ -134,6 +134,15 @@ def _call_native(native_url, model, messages, think_off, max_tokens, timeout, fm
     ctx = os.environ.get("PROOFER_NUM_CTX")
     if ctx:
         body["options"]["num_ctx"] = int(ctx)
+    else:
+        # Size the context to actually FIT prompt + output. Without this, Ollama applies
+        # its small default (~4k) and silently truncates the up-to-60k-char findings
+        # prompt server-side -- the model then judges only the head and returns valid JSON
+        # with a normal finish, so no truncation/repair retry fires and real findings are
+        # dropped with zero disclosure. Cap to bound KV-cache VRAM (the truncation retry
+        # raises num_predict to 16k, which still fits under 40960).
+        approx_prompt = sum(len(m.get("content", "")) for m in messages) // 3
+        body["options"]["num_ctx"] = min(40960, max(8192, approx_prompt + max_tokens + 1024))
     r = requests.post(native_url, json=body, timeout=timeout)
     r.raise_for_status()
     d = r.json()
@@ -233,15 +242,20 @@ def judge(findings, base_url=None, model=None, timeout=180, context=None):
 
     t0 = time.time()
     served_native = use_native
+    usages = []                              # every attempt's usage, for a true total spend
 
     def _transport(msgs, mt):
         nonlocal served_native
         if served_native:
             try:
-                return _call_native(native_url, model, msgs, think_off, mt, timeout, fmt)
+                res = _call_native(native_url, model, msgs, think_off, mt, timeout, fmt)
+                usages.append(res[2])
+                return res
             except (requests.RequestException, ValueError):
                 served_native = False       # unreachable OR non-JSON body -> fall back
-        return _call_openai(base_url, model, msgs, think_off, mt, timeout)
+        res = _call_openai(base_url, model, msgs, think_off, mt, timeout)
+        usages.append(res[2])
+        return res
 
     retry_on = os.environ.get("PROOFER_RETRY", "1").lower() not in ("0", "false", "no")
     retries = {}
@@ -294,15 +308,23 @@ def judge(findings, base_url=None, model=None, timeout=180, context=None):
             # render_md is defensive (.get) and the attempt is disclosed in _meta.
     # Server-attested provenance: model name + completion_tokens come from the server,
     # so non-zero completion_tokens with a model name proves the model generated this.
+    # usage is summed across EVERY transport attempt (including a failed retry) so a
+    # retry's tokens are never dropped from the reported spend; finish/response_chars
+    # describe the KEPT response. schema_constrained reflects the endpoint that produced
+    # the kept result, not whatever transport happened to be attempted last.
+    agg_usage = usage
+    if len(usages) > 1:
+        agg_usage = {k: sum((u.get(k) or 0) for u in usages)
+                     for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
     result["_meta"] = {
         "model_requested": model,
         "model_reported": model_reported,
         "base_url": endpoint,
-        "usage": usage,
+        "usage": agg_usage,
         "finish_reason": finish,
         "response_chars": len(content),
         "latency_ms": round((time.time() - t0) * 1000),
-        "schema_constrained": bool(schema_on and served_native),
+        "schema_constrained": bool(schema_on and str(endpoint).endswith("/api/chat")),
     }
     if shrunk:
         result["_meta"]["findings_shrunk"] = shrunk

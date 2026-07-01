@@ -1,11 +1,13 @@
 # core pipeline
-python-docx>=1.1
-lxml>=5.0
-pyspellchecker>=0.8
-requests>=2.31
-pdfplumber>=0.11
+# Upper bounds pin to the current major so a fresh install can't silently pull an
+# unvetted major (e.g. a Starlette/Pydantic/FastAPI break in serialization or uploads).
+python-docx>=1.1,<2
+lxml>=5.0,<7
+pyspellchecker>=0.8,<1
+requests>=2.31,<3
+pdfplumber>=0.11,<1
 
 # web service
-fastapi>=0.110
-uvicorn[standard]>=0.29
-python-multipart>=0.0.9
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29,<1
+python-multipart>=0.0.9,<1

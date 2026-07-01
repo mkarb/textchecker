@@ -5,7 +5,8 @@ def ok(n, c): (P if c else F).append(n); print(("PASS " if c else "FAIL ") + n)
 
 orig_post = requests.post
 NATIVE = {"status": 200, "content": '{"acronym_table":[],"acronym_issues":[],"misspellings":[],"customer":{"primary":"X"}}', "done": "stop"}
-OPENAI = {"content": '{"acronym_table":[{"acronym":"AB","expansion":"A B","status":"existing","note":""}],"customer":{"primary":"Y"}}', "finish": "stop"}
+# complete shape (all four required keys) so _validate_judgment passes and no repair round fires
+OPENAI = {"content": '{"acronym_table":[{"acronym":"AB","expansion":"A B","status":"existing","note":""}],"acronym_issues":[],"misspellings":[],"customer":{"primary":"Y"}}', "finish": "stop"}
 calls = []
 class Resp:
     def __init__(self, p, s=200): self.p = p; self.s = s
@@ -28,7 +29,7 @@ try:
     res = judge.judge(findings); url, body = calls[-1]
     ok("native /api/chat", url.endswith("/api/chat"))
     ok("think:false", body.get("think") is False)
-    ok("format json", body.get("format") == "json")
+    ok("format is the constrained schema", body.get("format") == judge.OUTPUT_SCHEMA)
     ok("num_predict bounded", body["options"]["num_predict"] == 8000)
     ok("_doc_text stripped", "SENTINELDOC" not in body["messages"][1]["content"])
     ok("endpoint native", res["_meta"]["base_url"].endswith("/api/chat"))

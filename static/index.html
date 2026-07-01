@@ -347,10 +347,21 @@ async function poll(){
   if(!currentJob)return;
   try{
     const r=await fetch('/api/jobs/'+currentJob);
+    if(r.status===404){go.disabled=false;return setStatus('This job has expired or is no longer available.',{err:true,spinning:false});}
+    if(!r.ok){setTimeout(poll,1500);return;}          // transient server hiccup: keep polling
     const j=await r.json();
+    // match the server's actual vocabulary: queued | extracting | awaiting_model |
+    // judging | done | error | canceled (there is no 'running').
     if(j.status==='queued'){setStatus('Waiting in queue…');}
-    else if(j.status==='running'){setStatus('Processing on the local model…');}
+    else if(j.status==='extracting'){setStatus('Extracting and scanning the document…');}
+    else if(j.status==='awaiting_model'){
+      const pos=(j.position!=null)?(' · position '+(j.position+1)):'';
+      const eta=(j.eta_ms!=null)?(' · ~'+Math.ceil(j.eta_ms/1000)+'s'):'';
+      setStatus('Waiting for the local model'+pos+eta+'…');
+    }
+    else if(j.status==='judging'){setStatus('Judging on the local model…');}
     else if(j.status==='done'){go.disabled=false;return showResult(j);}
+    else if(j.status==='canceled'){go.disabled=false;return setStatus('Job canceled.',{spinning:false});}
     else if(j.status==='error'){go.disabled=false;return setStatus('Processing failed: '+(j.error||'unknown'),{err:true,spinning:false});}
   }catch(e){/* transient */}
   setTimeout(poll,1500);
@@ -359,6 +370,7 @@ async function poll(){
 async function showResult(j){
   statusEl.classList.remove('show');
   const r=await fetch('/api/jobs/'+currentJob+'/report');
+  if(!r.ok){go.disabled=false;return setStatus('The report is no longer available (it may have expired).',{err:true,spinning:false});}
   document.getElementById('md').innerHTML=renderMd(await r.text());
   document.getElementById('resName').textContent=j.name||'';
   const warn=document.getElementById('resWarn');

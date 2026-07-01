@@ -2,7 +2,9 @@
 
 Users on the local network upload a .docx/.xml over HTTP and get a report back;
 no shell access to the model host is needed. This service is meant to run LOCAL
-ONLY -- it binds 127.0.0.1 by default and is not internet facing.
+ONLY. It binds 0.0.0.0 by default so the LAN can reach it (PROOFER_HOST overrides,
+e.g. 127.0.0.1 for loopback-only) -- the bind address is NOT the security boundary;
+scope the port to the LAN subnet at the firewall (see the startup log warning).
 
 Design:
 - Two-stage pipeline. Stage A (a CPU thread pool) does extraction + the
@@ -44,6 +46,12 @@ DATA = Path(os.environ.get("PROOFER_DATA", str(HERE / "data" / "jobs")))
 DATA.mkdir(parents=True, exist_ok=True)
 ALLOWED = {".docx", ".pdf", ".xml"}
 MAX_BYTES = int(os.environ.get("PROOFER_MAX_BYTES", 25 * 1024 * 1024))
+# Decompression guard for zip-container formats (.docx): the MAX_BYTES cap only bounds
+# the COMPRESSED upload, so a small zip whose parts inflate to gigabytes (a zip bomb)
+# would OOM the box during parsing. Reject if the declared uncompressed total or entry
+# count is implausible for a real document, before python-docx ever decompresses it.
+MAX_UNZIP_BYTES = int(os.environ.get("PROOFER_MAX_UNZIP_BYTES", 300 * 1024 * 1024))
+MAX_ZIP_ENTRIES = int(os.environ.get("PROOFER_MAX_ZIP_ENTRIES", 5000))
 RETAIN_HOURS = float(os.environ.get("PROOFER_RETAIN_HOURS", 12))
 
 # Local-only bind + capacity knobs (all overridable by env; safe defaults).
@@ -103,6 +111,49 @@ def _set(job_id, **kw):
 def _get(job_id):
     with _lock:
         return dict(_jobs.get(job_id, {}))
+
+
+def _public_findings(findings):
+    """Drop internal `_`-prefixed keys (notably `_doc_text`, the full document body)
+    before persisting/serving. The judge path already strips these before the model
+    (judge._shrink_findings); this is the matching guard so the raw CUI document never
+    lands in findings.json or the /findings response."""
+    return {k: v for k, v in (findings or {}).items() if not str(k).startswith("_")}
+
+
+def _dump_findings(jdir, findings, model):
+    (jdir / "findings.json").write_text(
+        json.dumps({"deterministic": _public_findings(findings), "model": model},
+                   indent=2, ensure_ascii=False),
+        encoding="utf-8")
+
+
+def _reject_zip_bomb(data, ext):
+    """For .docx (a ZIP), reject implausible decompression before parsing. Raises
+    HTTPException; no-op for non-zip formats."""
+    if ext != ".docx":
+        return
+    import io
+    import zipfile
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            infos = z.infolist()
+            if len(infos) > MAX_ZIP_ENTRIES:
+                raise HTTPException(413, "Document has too many internal parts.")
+            if sum(i.file_size for i in infos) > MAX_UNZIP_BYTES:
+                raise HTTPException(
+                    413, f"Document expands past the {MAX_UNZIP_BYTES // (1024*1024)} MB "
+                         "uncompressed limit.")
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "File is not a valid .docx (corrupt ZIP container).")
+
+
+def _safe_err(e):
+    """Client-facing error text. User-actionable pipeline problems are ValueErrors
+    (unsupported type, scanned/image-only PDF, empty doc) and are safe to surface;
+    every other exception is internal and may embed absolute paths or document
+    fragments, so it becomes a generic message and the detail stays in the log only."""
+    return str(e) if isinstance(e, ValueError) else "Processing failed; the file could not be analyzed."
 
 
 # --------------------------------------------------------------------- sessions
@@ -203,10 +254,10 @@ def _stage_a(job_id):
         src = next(p for p in jdir.iterdir() if p.suffix.lower() in ALLOWED)
         doc = pipeline.load(str(src))
         findings = pipeline.gather(doc, opts.get("expected_customer"), opts.get("min_count", 3))
-        # deterministic-only artifacts available immediately (before the model step)
-        (jdir / "findings.json").write_text(
-            json.dumps({"deterministic": findings, "model": None}, indent=2, ensure_ascii=False),
-            encoding="utf-8")
+        # deterministic-only artifacts available immediately (before the model step).
+        # render_md still gets the full findings (it needs _doc_text for exact counts);
+        # only the persisted/served JSON is stripped of internal keys.
+        _dump_findings(jdir, findings, None)
         (jdir / "report.md").write_text(pipeline.render_md(findings, None), encoding="utf-8")
 
         finished = False
@@ -227,7 +278,7 @@ def _stage_a(job_id):
     except Exception as e:
         with _lock:
             if job_id in _jobs:
-                _jobs[job_id].update(status="error", error=str(e))
+                _jobs[job_id].update(status="error", error=_safe_err(e))
         log.exception("job=%s stage_a failed: %s", job_id, e)
 
 
@@ -254,9 +305,7 @@ def _model_worker():
         except Exception as e:
             llm = {"_error": str(e)}
         try:
-            (jdir / "findings.json").write_text(
-                json.dumps({"deterministic": findings, "model": llm}, indent=2, ensure_ascii=False),
-                encoding="utf-8")
+            _dump_findings(jdir, findings, llm)
             (jdir / "report.md").write_text(pipeline.render_md(findings, llm), encoding="utf-8")
         except Exception as e:
             log.exception("job=%s write failed: %s", job_id, e)
@@ -283,10 +332,21 @@ def _reaper():
     while True:
         cutoff = time.time() - RETAIN_HOURS * 3600
         try:
-            for d in DATA.iterdir():
-                if d.is_dir() and d.stat().st_mtime < cutoff:
-                    shutil.rmtree(d, ignore_errors=True)
-                    with _lock:
+            for d in list(DATA.iterdir()):
+                if not (d.is_dir() and d.stat().st_mtime < cutoff):
+                    continue
+                # Never delete a job that is still queued/extracting/awaiting_model/judging:
+                # the single model lane can hold a job past RETAIN_HOURS, and rmtree'ing its
+                # dir mid-run would silently lose an accepted document. Reap only terminal or
+                # record-less (post-restart orphan) dirs.
+                with _lock:
+                    j = _jobs.get(d.name)
+                    if j and j.get("status") in ACTIVE:
+                        continue
+                shutil.rmtree(d, ignore_errors=True)
+                with _lock:
+                    j = _jobs.get(d.name)
+                    if not (j and j.get("status") in ACTIVE):
                         _jobs.pop(d.name, None)
         except FileNotFoundError:
             pass
@@ -318,6 +378,7 @@ async def create_job(
         raise HTTPException(400, "Empty file.")
     if len(data) > MAX_BYTES:
         raise HTTPException(413, f"File exceeds {MAX_BYTES // (1024*1024)} MB limit.")
+    _reject_zip_bomb(data, ext)   # bound decompressed size before anything parses it
 
     # limits use the EXISTING session (a brand-new browser has 0 active jobs)
     sid = _peek_session(request)
@@ -349,10 +410,12 @@ async def create_job(
 
     # store the upload only after the slot is reserved, so a rejected request leaves no
     # orphan dir; if the write fails, drop the reserved record and report it.
-    try:
+    def _store():
         jdir = DATA / job_id
         jdir.mkdir(parents=True)
         (jdir / ("input" + ext)).write_bytes(data)   # never trust the client filename as a path
+    try:
+        await asyncio.to_thread(_store)               # keep the up-to-25MB write off the event loop
     except Exception as e:
         with _lock:
             _jobs.pop(job_id, None)
@@ -418,7 +481,8 @@ async def job_report(request: Request, job_id: str):
     p = DATA / job_id / "report.md"
     if not p.exists():
         raise HTTPException(404, "Report not ready.")
-    return PlainTextResponse(p.read_text(encoding="utf-8"), media_type="text/markdown; charset=utf-8")
+    text = await asyncio.to_thread(p.read_text, encoding="utf-8")
+    return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
 
 
 @app.get("/api/jobs/{job_id}/findings")
@@ -429,7 +493,8 @@ async def job_findings(request: Request, job_id: str):
     p = DATA / job_id / "findings.json"
     if not p.exists():
         raise HTTPException(404, "Findings not ready.")
-    return JSONResponse(json.loads(p.read_text(encoding="utf-8")))
+    data = await asyncio.to_thread(p.read_text, encoding="utf-8")
+    return JSONResponse(json.loads(data))
 
 
 @app.get("/api/jobs/{job_id}/download")
@@ -493,7 +558,7 @@ async def index():
     p = _frontend("index.html")
     if not p:
         raise HTTPException(500, "index.html not found (put it beside server.py or in ./static).")
-    return p.read_text(encoding="utf-8")
+    return await asyncio.to_thread(p.read_text, encoding="utf-8")
 
 
 @app.get("/static/references.md")

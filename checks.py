@@ -114,15 +114,27 @@ def _suppress_subphrases(counts, min_count):
     """Drop a shorter phrase only if it is contained in a longer phrase AND its
     occurrences *outside* that longer phrase (count - best container count) fall
     below min_count -- i.e. it doesn't independently recur often enough to matter.
-    This keeps the most specific phrase even when the shorter one counts higher."""
-    items = list(counts.items())
+    This keeps the most specific phrase even when the shorter one counts higher.
+
+    Semantics-preserving inverted-index form (was O(P^2) all-pairs with a re-split per
+    comparison, which turned recurring-phrase detection quadratic on large caps-heavy
+    manuals). Any longer phrase that contains `s` must contain EVERY token of `s`,
+    including its rarest one, so scanning only the phrases sharing s's rarest token
+    finds the same best container as the all-pairs scan."""
+    items = [(s, tuple(s.split()), c) for s, c in counts.items()]
+    by_token = defaultdict(list)
+    for entry in items:
+        for t in set(entry[1]):
+            by_token[t].append(entry)
     drop = set()
-    for s, cs in items:
-        st = s.split()
+    for s, st, cs in items:
+        if not st:
+            continue
+        rarest = min(st, key=lambda t: len(by_token[t]))
         best = 0
-        for l, cl in items:
-            if l != s and len(l.split()) > len(st) and _contains(l.split(), st):
-                best = max(best, cl)
+        for l, lt, cl in by_token[rarest]:
+            if l != s and len(lt) > len(st) and cl > best and _contains(lt, st):
+                best = cl
         if best and cs - best < min_count:
             drop.add(s)
     return {p: c for p, c in counts.items() if p not in drop}
@@ -373,8 +385,13 @@ def page_checks(doc):
             if m:
                 seq.append((int(m.group(1)), b.path))
         for m in PAGE_OF.finditer(b.text):
-            seq.append((int(m.group(1)), b.path))
             totals.add(int(m.group(2)))
+            # The docx extractor appends one synthetic 'Page 1 of N' marker (path
+            # 'sections/pagination') just to carry the total; it is NOT a real in-order
+            # page label, so harvest its Y but keep its X out of the sequence -- otherwise
+            # real in-text 'Page X of Y' strings make it trip duplicate/out-of-order.
+            if b.path != "sections/pagination":
+                seq.append((int(m.group(1)), b.path))
 
     if len(totals) > 1:
         findings.append(PageFinding("inconsistent_total",
@@ -425,13 +442,20 @@ def page_checks(doc):
 ORG_SUFFIX = (r"(?:Inc|Inc\.|LLC|Corp|Corp\.|Corporation|Company|Co|Co\.|Ltd|Ltd\.|"
               r"GmbH|PLC|LP|LLP|Technologies|Systems|Industries|Defense|Aerospace|"
               r"Group|International|Solutions|Holdings|Enterprises)")
+# Note: 'and' is deliberately NOT an inner joiner -- it would bridge two distinct
+# companies ("Lockheed Martin and General Dynamics Corporation") into one captured org.
+# '&' and 'of' stay (real intra-name joiners: "Booz Allen & Hamilton", "Department of
+# Defense").
 ORG_RE = re.compile(
-    r"\b([A-Z][A-Za-z0-9&.\-]+(?:\s+(?:&|and|of)?\s*[A-Z][A-Za-z0-9&.\-]+){0,5},?\s+"
+    r"\b([A-Z][A-Za-z0-9&.\-]+(?:\s+(?:&|of)?\s*[A-Z][A-Za-z0-9&.\-]+){0,5},?\s+"
     + ORG_SUFFIX + r")\b"
 )
+# Only TRUE legal-form suffixes are stripped for the cluster key. Descriptive words
+# (Defense/Systems/Aerospace/...) distinguish separate entities ("Acme Defense" vs
+# "Acme Systems") and must stay in the key, or distinct orgs collapse into one and
+# fire a false inconsistent_org_form. They remain in ORG_SUFFIX for *matching* only.
 _SUFFIX_WORDS = re.compile(
-    r"\b(inc|llc|corp|corporation|company|co|ltd|gmbh|plc|lp|llp|technologies|systems|"
-    r"industries|defense|aerospace|group|international|solutions|holdings|enterprises)\b"
+    r"\b(inc|llc|corp|corporation|company|co|ltd|gmbh|plc|lp|llp)\b"
 )
 
 
@@ -506,8 +530,31 @@ def count_phrase(text, phrase):
 
 
 def annotate_acronym_counts(table, text):
-    """Attach exact occurrence counts to each model acronym-table row, in place."""
-    for r in (table or []):
-        r["acronym_count"] = count_acronym(text, r.get("acronym", ""))
-        r["expansion_count"] = count_phrase(text, r.get("expansion", ""))
+    """Attach exact occurrence counts to each acronym-table row, in place. Instead of
+    re-scanning the whole document once per row (O(rows x doc) -- ~7s for 150 rows over a
+    few MB at render time), scan once. Acronyms never overlap under the non-alnum
+    boundary, so a single longest-first alternation is exactly equivalent to per-row
+    count_acronym. Expansions CAN overlap (a phrase inside a longer phrase), where a
+    greedy alternation would undercount, so each DISTINCT expansion is counted with the
+    exact count_phrase but deduped so identical expansions are scanned only once."""
+    rows = table or []
+    text = text or ""
+
+    acrs = sorted({r.get("acronym", "") for r in rows if r.get("acronym")},
+                  key=len, reverse=True)
+    acr_counts = Counter()
+    if acrs:
+        pat = re.compile(r"(?<![A-Za-z0-9])(" + "|".join(re.escape(a) for a in acrs)
+                         + r")(?![A-Za-z0-9])")
+        acr_counts = Counter(pat.findall(text))
+
+    exp_counts = {}
+    for e in {" ".join((r.get("expansion", "") or "").split()) for r in rows}:
+        if e:
+            exp_counts[e.lower()] = count_phrase(text, e)
+
+    for r in rows:
+        r["acronym_count"] = acr_counts.get(r.get("acronym", ""), 0)
+        exp_key = " ".join((r.get("expansion", "") or "").split()).lower()
+        r["expansion_count"] = exp_counts.get(exp_key, 0)
     return table

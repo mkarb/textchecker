@@ -34,6 +34,18 @@ def _ws(s):
     return re.sub(r"\s+", " ", (s or "")).strip()
 
 
+def _hardened_xml_parser():
+    """A fresh lxml parser locked down for UNTRUSTED input: no external entity
+    resolution, no DTD load, no network, no unbounded tree -- the same threat model for
+    a generic .xml upload and for the XML parts inside a .docx (footnotes/endnotes).
+    A new instance per call because lxml parsers are not safe to share across threads
+    (Stage A parses on a thread pool)."""
+    return etree.XMLParser(
+        recover=True, remove_comments=True, remove_pis=True,
+        resolve_entities=False, load_dtd=False, no_network=True, huge_tree=False,
+    )
+
+
 # --------------------------------------------------------------------------- docx
 # ------------------------------------------------- docx coverage: sections & parts
 # python-docx's body walk misses four whole classes of content:
@@ -98,7 +110,7 @@ def _docx_note_blocks(d):
         if part is None:
             continue
         try:
-            root = etree.fromstring(part.blob)
+            root = etree.fromstring(part.blob, _hardened_xml_parser())
         except Exception:
             continue
         for note in root.iter(_WNS + tag):
@@ -132,21 +144,35 @@ def _docx_textbox_blocks(d):
 
 
 def _walk_docx_table(table, base, blocks):
-    """Emit a table's rows as blocks and recurse into tables nested in cells
-    (cell.text does not include nested-table text, so without this they vanish)."""
+    """Emit a table's rows as blocks and recurse into tables nested in cells.
+
+    Deduplicate by underlying <w:tc> identity: python-docx's row.cells yields the SAME
+    _Cell for every grid column a horizontal gridSpan covers AND for every row a vertical
+    vMerge continues, so without this a merged cell's text is repeated -- 'SPAN | SPAN | Z',
+    or a merged glossary acronym column flattening to 'CA | CA | Corrective Action', which
+    _gloss_pair then drops as exp==acr, silently destroying the definition. cell.text does
+    not include nested-table text, so nested tables are recursed explicitly."""
+    # Hold the <w:tc> elements and compare by identity (`is`), NOT id(): lxml element
+    # proxies are ephemeral, so a set of id()s recycles freed addresses and false-matches
+    # unrelated cells. python-docx returns the SAME _tc for every column a gridSpan covers
+    # and every row a vMerge continues, so identity is exactly the merge test.
+    seen_tc = []                          # table-wide: catches gridSpan (in-row) and vMerge (cross-row)
     for r, row in enumerate(table.rows):
-        cells = [_ws(c.text) for c in row.cells]
-        txt = " | ".join(c for c in cells if c)
+        cells, nested_here = [], []
+        for c in row.cells:
+            tc = c._tc
+            if any(tc is s for s in seen_tc):
+                continue
+            seen_tc.append(tc)
+            t = _ws(c.text)
+            if t:
+                cells.append(t)
+            nested_here.extend(c.tables)
+        txt = " | ".join(cells)
         if txt:
             blocks.append(Block(txt, f"{base}/tr[{r}]", "table"))
-        seen_nested = set()
-        for c in row.cells:
-            for k, nested in enumerate(c.tables):
-                nid = id(nested._tbl)
-                if nid in seen_nested:        # merged cells repeat the same object
-                    continue
-                seen_nested.add(nid)
-                _walk_docx_table(nested, f"{base}/tr[{r}]/tbl[{k}]", blocks)
+        for k, nested in enumerate(nested_here):
+            _walk_docx_table(nested, f"{base}/tr[{r}]/tbl[{k}]", blocks)
 
 
 def from_docx(path) -> Doc:
@@ -251,11 +277,7 @@ def _kind_of(tag):
 
 
 def from_xml(path) -> Doc:
-    parser = etree.XMLParser(
-        recover=True, remove_comments=True, remove_pis=True,
-        resolve_entities=False, load_dtd=False, no_network=True, huge_tree=False,
-    )
-    tree = etree.parse(str(path), parser)
+    tree = etree.parse(str(path), _hardened_xml_parser())
     root = tree.getroot()
     doc = Doc(source=str(path))
 
