@@ -19,7 +19,7 @@ class FakeResp:
 
 def native_body(content, finish="stop"):
     return {"message": {"content": content}, "done_reason": finish,
-            "prompt_eval_count": 100, "eval_count": 50, "model": "qwen3:30b-a3b"}
+            "prompt_eval_count": 100, "eval_count": 50, "model": "ornith:latest"}
 
 def openai_body(content, finish="stop"):
     return {"choices": [{"message": {"content": content}, "finish_reason": finish}],
@@ -51,7 +51,7 @@ ok("t1 format is the full schema (dict w/ required keys)",
    and set(b["format"]["required"]) == {"acronym_table", "acronym_issues", "misspellings", "customer"})
 ok("t1 think off by default", b["think"] is False)
 ok("t1 _doc_text never sent", "SECRET BODY" not in json.dumps(b))
-ok("t1 default model is qwen3:30b-a3b", b["model"] == "qwen3:30b-a3b")
+ok("t1 default model is ornith:latest", b["model"] == "ornith:latest")
 ok("t1 parsed table present", r["acronym_table"][0]["acronym"] == "WGT")
 ok("t1 meta says schema_constrained", r["_meta"]["schema_constrained"] is True)
 ok("t1 no retries recorded", "retries" not in r["_meta"])

@@ -202,7 +202,7 @@ def _validate_judgment(result):
 
 def judge(findings, base_url=None, model=None, timeout=180, context=None):
     base_url = base_url or os.environ.get("OPENAI_BASE_URL", "http://localhost:11434/v1")
-    model = model or os.environ.get("MODEL", "qwen3:30b-a3b")
+    model = model or os.environ.get("MODEL", "ornith:latest")
     max_tokens = int(os.environ.get("PROOFER_MAX_TOKENS", "8000"))
     think_off = os.environ.get("PROOFER_THINK", "").lower() not in ("1", "true", "yes")
 
@@ -337,7 +337,7 @@ def probe(base_url=None, model=None, timeout=20):
     """Actively verify the inference server: which models it offers, plus a tiny
     chat round-trip. Returns a dict safe to expose via an API/diagnostics route."""
     base_url = base_url or os.environ.get("OPENAI_BASE_URL", "http://localhost:11434/v1")
-    model = model or os.environ.get("MODEL", "qwen3:30b-a3b")
+    model = model or os.environ.get("MODEL", "ornith:latest")
     out = {"base_url": base_url, "model_configured": model, "reachable": False}
     try:
         m = requests.get(f"{base_url}/models", timeout=5)
